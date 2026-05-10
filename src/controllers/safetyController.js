@@ -19,6 +19,7 @@ const getDeletedFiles = async (req, res) => {
         const deletedFilesRaw = await File.find({ isDeleted: true })
             .populate("deletedBy", "name email")
             .populate("folderId", "name path")
+            .populate("currentVersionId", "mimeType size originalName")
             .sort({ deletedAt: -1 })
             .lean();
 
@@ -28,11 +29,15 @@ const getDeletedFiles = async (req, res) => {
             .map(f => ({
                 _id: f._id,
                 name: f.originalName,
+                originalName: f.originalName,
                 folder: f.folderId,
                 deletedAt: f.deletedAt,
                 deletedBy: f.deletedBy,
                 deleteReason: f.deleteReason,
-                daysRemaining: calculateDaysRemaining(f.deletedAt)
+                daysRemaining: calculateDaysRemaining(f.deletedAt),
+                mimeType: f.currentVersionId?.mimeType || "-",
+                type: f.currentVersionId?.mimeType || "-",
+                size: f.currentVersionId?.size || 0,
             }));
 
         res.json({

@@ -35,7 +35,7 @@ const router = express.Router();
  *       500:
  *         description: Server error
  */
-router.get("/deleted-files", protect, authorizeRoles("superadmin"), getDeletedFiles);
+router.get("/deleted-files", protect, authorizeRoles("superadmin", "owner"), getDeletedFiles);
 
 /**
  * @swagger
@@ -56,7 +56,8 @@ router.get("/deleted-files", protect, authorizeRoles("superadmin"), getDeletedFi
  *       500:
  *         description: Server error
  */
-router.get("/deleted-folders", protect, authorizeRoles("superadmin"), getDeletedFolders);
+
+router.get("/deleted-folders", protect, authorizeRoles("superadmin", "owner"), getDeletedFolders);
 
 /**
  * @swagger
