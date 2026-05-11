@@ -1,4 +1,5 @@
 const express = require("express");
+
 const {
     createUser,
     getUsers,
@@ -6,6 +7,8 @@ const {
     updateUserStatus,
     deleteUser,
     updateUserRole,
+    changeMyPassword,
+    resetUserPassword,
 } = require("../controllers/userController");
 
 const { protect } = require("../middlewares/authMiddleware");
@@ -15,7 +18,8 @@ const router = express.Router();
 
 router.post("/", protect, authorizeRoles("superadmin"), createUser);
 
-// Safe list for Permissions page
+router.patch("/change-password", protect, changeMyPassword);
+
 router.get(
     "/permission-options",
     protect,
@@ -25,10 +29,32 @@ router.get(
 
 router.get("/", protect, authorizeRoles("superadmin"), getUsers);
 
-router.patch("/:id/status", protect, authorizeRoles("superadmin"), updateUserStatus);
+router.patch(
+    "/:id/status",
+    protect,
+    authorizeRoles("superadmin"),
+    updateUserStatus
+);
 
-router.delete("/:id", protect, authorizeRoles("superadmin"), deleteUser);
+router.delete(
+    "/:id",
+    protect,
+    authorizeRoles("superadmin"),
+    deleteUser
+);
 
-router.patch("/:id/role", protect, authorizeRoles("superadmin"), updateUserRole);
+router.patch(
+    "/:id/role",
+    protect,
+    authorizeRoles("superadmin"),
+    updateUserRole
+);
+
+router.patch(
+    "/:id/reset-password",
+    protect,
+    authorizeRoles("superadmin"),
+    resetUserPassword
+);
 
 module.exports = router;
