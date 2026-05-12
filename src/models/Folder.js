@@ -56,6 +56,12 @@ const folderSchema = new mongoose.Schema(
 );
 
 // Index to prevent duplicate folder names within the same parent
-folderSchema.index({ name: 1, parentFolderId: 1, isDeleted: 1 }, { unique: true });
+folderSchema.index(
+    { name: 1, parentFolderId: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { isDeleted: false },
+    }
+);
 
 module.exports = mongoose.model("Folder", folderSchema);

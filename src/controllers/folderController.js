@@ -10,25 +10,38 @@ const createFolder = async (req, res) => {
         const { name, parentFolderId } = req.body;
 
         if (!name) {
-            return res.status(400).json({ success: false, message: "Folder name is required" });
+            return res.status(400).json({
+                success: false,
+                message: "Folder name is required",
+            });
         }
 
         let path = name;
         let level = 0;
 
-        if (parentFolderId) {
-            const parentFolder = await Folder.findOne({ _id: parentFolderId, isDeleted: false });
+        if (parentFolderId && parentFolderId !== "null") {
+            const parentFolder = await Folder.findOne({
+                _id: parentFolderId,
+                isDeleted: false,
+            });
+
             if (!parentFolder) {
-                return res.status(404).json({ success: false, message: "Parent folder not found" });
+                return res.status(404).json({
+                    success: false,
+                    message: "Parent folder not found",
+                });
             }
+
             path = `${parentFolder.path}/${name}`;
             level = parentFolder.level + 1;
         }
 
-        // Check for duplicate folder name in the same parent
         const existingFolder = await Folder.findOne({
             name,
-            parentFolderId: parentFolderId || null,
+            parentFolderId:
+                parentFolderId && parentFolderId !== "null"
+                    ? parentFolderId
+                    : null,
             isDeleted: false,
         });
 
@@ -41,7 +54,10 @@ const createFolder = async (req, res) => {
 
         const folder = await Folder.create({
             name,
-            parentFolderId: parentFolderId || null,
+            parentFolderId:
+                parentFolderId && parentFolderId !== "null"
+                    ? parentFolderId
+                    : null,
             path,
             level,
             createdBy: req.user._id,
@@ -61,7 +77,7 @@ const createFolder = async (req, res) => {
             targetId: folder._id,
             folderId: folder._id,
             message: `${req.user.name} created folder ${folder.name}`,
-            req
+            req,
         });
 
         res.status(201).json({
@@ -76,6 +92,7 @@ const createFolder = async (req, res) => {
                 message: "A folder with this name already exists in this location",
             });
         }
+
         res.status(500).json({
             success: false,
             message: "Folder creation failed",
@@ -90,21 +107,44 @@ const getFolders = async (req, res) => {
     try {
         const { parentFolderId } = req.query;
 
-        const query = { isDeleted: false };
+        const query = {
+            isDeleted: false,
+        };
+
         if (parentFolderId !== undefined) {
-            query.parentFolderId = parentFolderId === "null" ? null : parentFolderId;
+            query.parentFolderId =
+                parentFolderId === "null" ? null : parentFolderId;
         }
 
-        if (req.user && req.user.role !== "superadmin") {
+        if (req.user) {
             const permissions = await Permission.find({
                 userId: req.user._id,
-                isActive: true
+                isActive: true,
             });
-            const allowedFolderIds = permissions.map(p => p.folderId);
+
+            const allowedFolderIds = permissions.map((p) => p.folderId);
+
             query._id = { $in: allowedFolderIds };
         }
 
-        const folders = await Folder.find(query).sort({ name: 1 });
+        const deletedFolders = await Folder.find({
+            isDeleted: true,
+        }).select("path");
+
+        const deletedPaths = deletedFolders.map((folder) => folder.path);
+
+        let folders = await Folder.find(query).sort({
+            name: 1,
+        });
+
+        folders = folders.filter((folder) => {
+            return !deletedPaths.some((deletedPath) => {
+                return (
+                    folder.path === deletedPath ||
+                    folder.path.startsWith(`${deletedPath}/`)
+                );
+            });
+        });
 
         res.json({
             success: true,
@@ -124,10 +164,16 @@ const getFolders = async (req, res) => {
 // @route GET /api/folders/:id
 const getFolderById = async (req, res) => {
     try {
-        const folder = await Folder.findOne({ _id: req.params.id, isDeleted: false });
+        const folder = await Folder.findOne({
+            _id: req.params.id,
+            isDeleted: false,
+        });
 
         if (!folder) {
-            return res.status(404).json({ success: false, message: "Folder not found" });
+            return res.status(404).json({
+                success: false,
+                message: "Folder not found",
+            });
         }
 
         res.json({
@@ -148,18 +194,26 @@ const getFolderById = async (req, res) => {
 const renameFolder = async (req, res) => {
     try {
         const { name } = req.body;
-        
+
         if (!name) {
-            return res.status(400).json({ success: false, message: "New folder name is required" });
+            return res.status(400).json({
+                success: false,
+                message: "New folder name is required",
+            });
         }
 
-        const folder = await Folder.findOne({ _id: req.params.id, isDeleted: false });
+        const folder = await Folder.findOne({
+            _id: req.params.id,
+            isDeleted: false,
+        });
 
         if (!folder) {
-            return res.status(404).json({ success: false, message: "Folder not found" });
+            return res.status(404).json({
+                success: false,
+                message: "Folder not found",
+            });
         }
 
-        // Check duplicate name
         const duplicate = await Folder.findOne({
             name,
             parentFolderId: folder.parentFolderId,
@@ -168,14 +222,21 @@ const renameFolder = async (req, res) => {
         });
 
         if (duplicate) {
-            return res.status(400).json({ success: false, message: "A folder with this name already exists in this location" });
+            return res.status(400).json({
+                success: false,
+                message: "A folder with this name already exists in this location",
+            });
         }
 
         const oldPath = folder.path;
         let newPath = name;
-        
+
         if (folder.parentFolderId) {
-            const parentFolder = await Folder.findOne({ _id: folder.parentFolderId, isDeleted: false });
+            const parentFolder = await Folder.findOne({
+                _id: folder.parentFolderId,
+                isDeleted: false,
+            });
+
             if (parentFolder) {
                 newPath = `${parentFolder.path}/${name}`;
             }
@@ -185,15 +246,16 @@ const renameFolder = async (req, res) => {
         folder.path = newPath;
         await folder.save();
 
-        // Update path for all child folders properly
-        // Find folders where path starts with `oldPath/`
         const children = await Folder.find({
             path: { $regex: `^${oldPath}/` },
             isDeleted: false,
         });
 
         for (let child of children) {
-            child.path = child.path.replace(new RegExp(`^${oldPath}/`), `${newPath}/`);
+            child.path = child.path.replace(
+                new RegExp(`^${oldPath}/`),
+                `${newPath}/`
+            );
             await child.save();
         }
 
@@ -211,51 +273,74 @@ const renameFolder = async (req, res) => {
     }
 };
 
-// @desc Soft delete a folder
+// @desc Soft delete a folder and its child folders
 // @route DELETE /api/folders/:id
 const deleteFolder = async (req, res) => {
     try {
-        const { confirm, reason } = req.body;
-        
+        const body = req.body || {};
+        const { confirm, reason } = body;
+
         if (confirm !== true) {
             return res.status(400).json({
                 success: false,
-                message: "Delete confirmation required."
+                message: "Delete confirmation required.",
             });
         }
 
-        const folder = await Folder.findOne({ _id: req.params.id, isDeleted: false });
+        const folder = await Folder.findOne({
+            _id: req.params.id,
+            isDeleted: false,
+        });
 
         if (!folder) {
-            return res.status(404).json({ success: false, message: "Folder not found" });
+            return res.status(404).json({
+                success: false,
+                message: "Folder not found",
+            });
         }
 
-        folder.isDeleted = true;
-        folder.deletedAt = new Date();
-        folder.deletedBy = req.user._id;
-        folder.deleteReason = reason || null;
-        await folder.save();
+        const deletedAt = new Date();
 
-        // Note: As per MVP rules, we do NOT physically delete child folders.
-        // The structure is kept intact for soft deletes.
-        
+        await Folder.updateMany(
+            {
+                isDeleted: false,
+                $or: [
+                    { _id: folder._id },
+                    { path: { $regex: `^${folder.path}/` } },
+                ],
+            },
+            {
+                $set: {
+                    isDeleted: true,
+                    deletedAt,
+                    deletedBy: req.user?._id || null,
+                    deleteReason: reason || null,
+                },
+            }
+        );
+
         await logActivity({
-            userId: req.user._id,
+            userId: req.user?._id,
             action: "folder_deleted",
             targetType: "folder",
             targetId: folder._id,
             folderId: folder._id,
-            message: `${req.user.name} deleted folder ${folder.name}`,
-            metadata: { reason, deletedAt: folder.deletedAt },
-            req
+            message: `${req.user?.name || "User"} deleted folder ${folder.name}`,
+            metadata: {
+                reason: reason || null,
+                deletedAt,
+            },
+            req,
         });
 
-        res.json({
+        return res.json({
             success: true,
-            message: "Folder deleted successfully",
+            message: "Folder and child folders deleted successfully",
         });
     } catch (error) {
-        res.status(500).json({
+        console.error("Folder deletion failed:", error);
+
+        return res.status(500).json({
             success: false,
             message: "Folder deletion failed",
             error: error.message,
@@ -267,14 +352,23 @@ const deleteFolder = async (req, res) => {
 // @route POST /api/folders/:id/restore-deleted
 const restoreDeletedFolder = async (req, res) => {
     try {
-        const folder = await Folder.findOne({ _id: req.params.id, isDeleted: true });
+        const folder = await Folder.findOne({
+            _id: req.params.id,
+            isDeleted: true,
+        });
 
         if (!folder) {
-            return res.status(404).json({ success: false, message: "Deleted folder not found" });
+            return res.status(404).json({
+                success: false,
+                message: "Deleted folder not found",
+            });
         }
 
         if (!isWithinRetentionWindow(folder.deletedAt)) {
-            return res.status(400).json({ success: false, message: "Restore window expired." });
+            return res.status(400).json({
+                success: false,
+                message: "Restore window expired.",
+            });
         }
 
         folder.isDeleted = false;
@@ -283,6 +377,7 @@ const restoreDeletedFolder = async (req, res) => {
         folder.deleteReason = null;
         folder.restoredAt = new Date();
         folder.restoredBy = req.user._id;
+
         await folder.save();
 
         await logActivity({
@@ -293,12 +388,12 @@ const restoreDeletedFolder = async (req, res) => {
             folderId: folder._id,
             message: `${req.user.name} restored folder ${folder.name}`,
             metadata: { restoredAt: folder.restoredAt },
-            req
+            req,
         });
 
         res.json({
             success: true,
-            message: "Folder restored successfully"
+            message: "Folder restored successfully",
         });
     } catch (error) {
         res.status(500).json({

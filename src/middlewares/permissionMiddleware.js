@@ -17,8 +17,7 @@ const requireFolderPermission = (requiredAccess) => {
                 });
             }
 
-            // Superadmin and owner bypass all folder permission checks
-            if (["superadmin", "owner"].includes(req.user.role)) {
+            if (req.user.role === "owner") {
                 return next();
             }
 

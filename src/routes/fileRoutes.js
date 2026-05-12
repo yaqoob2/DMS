@@ -71,7 +71,7 @@ const router = express.Router();
  *       500:
  *         description: Server error
  */
-router.post("/upload", protect, requireFolderPermission("edit"), upload.single("file"), uploadFile);
+router.post("/upload", protect, upload.single("file"), requireFolderPermission("edit"), uploadFile);
 
 /**
  * @swagger
