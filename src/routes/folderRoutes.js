@@ -6,6 +6,7 @@ const {
     renameFolder,
     deleteFolder,
     restoreDeletedFolder,
+    permanentlyDeleteFolder,
 } = require("../controllers/folderController");
 const { getFolderPermissions } = require("../controllers/permissionController");
 const { getFolderActivityLogs } = require("../controllers/activityController");
@@ -84,6 +85,36 @@ router.post("/", protect, createFolder);
  *         description: Server error
  */
 router.get("/", protect, getFolders);
+
+/**
+ * @swagger
+ * /api/folders/{folderId}/permissions:
+ *   get:
+ *     summary: Get all permissions for a folder
+ *     description: Retrieve all active permissions for a specific folder. Requires admin access.
+ *     tags: [Permissions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: folderId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Folder ID
+ *     responses:
+ *       200:
+ *         description: Permissions fetched successfully
+ *       401:
+ *         description: Not authorized
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Folder not found
+ *       500:
+ *         description: Server error
+ */
+router.get("/:folderId/permissions", protect, requireFolderPermission("admin"), getFolderPermissions);
 
 /**
  * @swagger
@@ -202,7 +233,7 @@ router.patch("/:id", protect, requireFolderPermission("edit"), renameFolder);
  *       500:
  *         description: Server error
  */
-router.delete("/:id", protect, requireFolderPermission("admin"), deleteFolder);
+router.delete("/:id", protect, deleteFolder);
 
 /**
  * @swagger
@@ -234,37 +265,45 @@ router.delete("/:id", protect, requireFolderPermission("admin"), deleteFolder);
  *       500:
  *         description: Server error
  */
-router.post("/:id/restore-deleted", protect, requireFolderPermission("admin"), restoreDeletedFolder);
+router.post("/:id/restore-deleted", protect, restoreDeletedFolder);
 
 /**
  * @swagger
- * /api/folders/{folderId}/permissions:
- *   get:
- *     summary: Get all permissions for a folder
- *     description: Retrieve all active permissions for a specific folder. Requires admin access.
- *     tags: [Permissions]
+ * /api/folders/{id}/permanent-delete:
+ *   post:
+ *     summary: Permanently delete a soft-deleted folder
+ *     description: Removes the folder and its soft-deleted descendants from the database. Does not delete R2 objects.
+ *     tags: [Folders]
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: folderId
+ *         name: id
  *         required: true
  *         schema:
  *           type: string
- *         description: Folder ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - confirm
+ *             properties:
+ *               confirm:
+ *                 type: boolean
  *     responses:
  *       200:
- *         description: Permissions fetched successfully
- *       401:
- *         description: Not authorized
+ *         description: Folder permanently deleted
+ *       400:
+ *         description: Confirmation required
  *       403:
  *         description: Access denied
  *       404:
- *         description: Folder not found
- *       500:
- *         description: Server error
+ *         description: Deleted folder not found
  */
-router.get("/:folderId/permissions", protect, requireFolderPermission("admin"), getFolderPermissions);
+router.post("/:id/permanent-delete", protect, permanentlyDeleteFolder);
 
 /**
  * @swagger

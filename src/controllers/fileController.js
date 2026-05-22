@@ -4,11 +4,20 @@ const r2 = require("../config/r2");
 const File = require("../models/File");
 const FileVersion = require("../models/FileVersion");
 const Folder = require("../models/Folder");
-const Permission = require("../models/Permission");
 const { logActivity } = require("../services/activityService");
 const { getStorageMetrics } = require("../services/storageService");
 const { getFileTypeInfo } = require("../utils/fileTypeHelper");
 const { isWithinRetentionWindow } = require("../utils/retentionHelper");
+const {
+    getAccessibleFolderIds,
+    isFolderAccessible,
+} = require("../middlewares/permissionMiddleware");
+const {
+    userCanPermanentlyDeleteFile,
+    removeDeletedFileRecord,
+} = require("../services/trashService");
+
+const sameUserId = (a, b) => Boolean(a && b && a.toString() === b.toString());
 
 const sanitizeFileName = (fileName) => {
     return fileName.replace(/[^a-zA-Z0-9.\-_]/g, "_");
@@ -146,19 +155,6 @@ const uploadNewVersion = async (req, res) => {
         const file = await File.findOne({ _id: fileId, isDeleted: false });
         if (!file) return res.status(404).json({ success: false, message: "File not found or deleted" });
 
-        const permission = await Permission.findOne({
-            folderId: file.folderId,
-            userId: req.user._id,
-            isActive: true,
-        });
-
-        if (!permission || !["edit", "admin"].includes(permission.access)) {
-            return res.status(403).json({
-                success: false,
-                message: "Only users with edit or admin access can upload a new version.",
-            });
-        }
-
         const metrics = await getStorageMetrics();
         if (metrics.usedBytes + uploadedFile.size > metrics.limitBytes) {
             return res.status(403).json({
@@ -251,21 +247,23 @@ const getFiles = async (req, res) => {
         const { folderId } = req.query;
         const query = { isDeleted: false };
 
-        if (folderId) query.folderId = folderId;
-
-        const permissions = await Permission.find({
-            userId: req.user._id,
-            isActive: true,
-        });
-
-        const allowedFolderIds = permissions.map((p) => p.folderId);
+        const accessibleFolderIds = await getAccessibleFolderIds(req.user._id);
 
         if (folderId) {
-            if (!allowedFolderIds.some((id) => id.toString() === folderId.toString())) {
-                return res.status(403).json({ success: false, message: "Access denied to this folder" });
+            const hasAccess = await isFolderAccessible(req.user._id, folderId);
+
+            if (!hasAccess) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Access denied to this folder",
+                });
             }
+
+            query.folderId = folderId;
+        } else if (accessibleFolderIds.length > 0) {
+            query.folderId = { $in: accessibleFolderIds };
         } else {
-            query.folderId = { $in: allowedFolderIds };
+            query.folderId = { $in: [] };
         }
 
         const files = await File.find(query).populate("currentVersionId").sort({ createdAt: -1 });
@@ -442,12 +440,40 @@ const deleteFile = async (req, res) => {
         const body = req.body || {};
         const { confirm, reason } = body;
 
+        const activeFile = await File.findOne({
+            _id: req.params.id,
+            isDeleted: false,
+        });
+
+        const deletedFile = await File.findOne({
+            _id: req.params.id,
+            isDeleted: true,
+        });
+
+        if (!activeFile && deletedFile) {
+            req.body = { ...body, confirm: true };
+            return permanentlyDeleteFile(req, res);
+        }
+
+        if (!activeFile) {
+            return res.status(404).json({ success: false, message: "File not found" });
+        }
+
         if (confirm !== true) {
             return res.status(400).json({ success: false, message: "Delete confirmation required." });
         }
 
-        const file = await File.findOne({ _id: req.params.id, isDeleted: false });
-        if (!file) return res.status(404).json({ success: false, message: "File not found" });
+        const file = activeFile;
+
+        if (
+            !file.uploadedBy ||
+            file.uploadedBy.toString() !== req.user._id.toString()
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "Only the file owner can delete this file.",
+            });
+        }
 
         file.isDeleted = true;
         file.deletedAt = new Date();
@@ -477,6 +503,16 @@ const restoreDeletedFile = async (req, res) => {
     try {
         const file = await File.findOne({ _id: req.params.id, isDeleted: true });
         if (!file) return res.status(404).json({ success: false, message: "Deleted file not found" });
+
+        if (
+            !file.uploadedBy ||
+            file.uploadedBy.toString() !== req.user._id.toString()
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "Only the file owner can restore this file.",
+            });
+        }
 
         if (!isWithinRetentionWindow(file.deletedAt)) {
             return res.status(400).json({ success: false, message: "Restore window expired." });
@@ -508,6 +544,58 @@ const restoreDeletedFile = async (req, res) => {
     }
 };
 
+const permanentlyDeleteFile = async (req, res) => {
+    try {
+        const body = req.body || {};
+        const { confirm } = body;
+
+        if (confirm !== true) {
+            return res.status(400).json({
+                success: false,
+                message: "Permanent delete confirmation required.",
+            });
+        }
+
+        const file = await File.findOne({ _id: req.params.id, isDeleted: true });
+
+        if (!file) {
+            return res.status(404).json({ success: false, message: "Deleted file not found" });
+        }
+
+        const canDelete = await userCanPermanentlyDeleteFile(req.user, file);
+
+        if (!canDelete) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Only the file owner or users with admin permission on the folder can permanently delete this file.",
+            });
+        }
+
+        await removeDeletedFileRecord(file);
+
+        await logActivity({
+            userId: req.user._id,
+            action: "file_deleted",
+            targetType: "file",
+            targetId: file._id,
+            fileId: file._id,
+            folderId: file.folderId,
+            message: `${req.user.name} permanently deleted file ${file.originalName}`,
+            metadata: { permanent: true },
+            req,
+        });
+
+        res.json({ success: true, message: "File permanently deleted" });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: "Permanent file deletion failed",
+            error: error.message,
+        });
+    }
+};
+
 module.exports = {
     uploadFile,
     uploadNewVersion,
@@ -520,4 +608,5 @@ module.exports = {
     restoreVersion,
     deleteFile,
     restoreDeletedFile,
+    permanentlyDeleteFile,
 };

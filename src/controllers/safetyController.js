@@ -1,5 +1,11 @@
 const File = require("../models/File");
 const Folder = require("../models/Folder");
+const { logActivity } = require("../services/activityService");
+const {
+    getRootDeletedFolders,
+    permanentlyDeleteAllDeletedFolders,
+    permanentlyDeleteAllDeletedFiles,
+} = require("../services/trashService");
 const { isWithinRetentionWindow } = require("../utils/retentionHelper");
 
 // Helper to calculate days remaining
@@ -23,10 +29,20 @@ const getDeletedFiles = async (req, res) => {
             .sort({ deletedAt: -1 })
             .lean();
 
-        // Filter and map in memory
+        const deletedFolderIds = await Folder.find({ isDeleted: true }).distinct("_id");
+
         const validFiles = deletedFilesRaw
-            .filter(f => isWithinRetentionWindow(f.deletedAt))
-            .map(f => ({
+            .filter((f) => isWithinRetentionWindow(f.deletedAt))
+            .filter((f) => {
+                const folderRef = f.folderId?._id || f.folderId;
+                return (
+                    !folderRef ||
+                    !deletedFolderIds.some(
+                        (id) => id.toString() === folderRef.toString()
+                    )
+                );
+            })
+            .map((f) => ({
                 _id: f._id,
                 name: f.originalName,
                 originalName: f.originalName,
@@ -43,13 +59,13 @@ const getDeletedFiles = async (req, res) => {
         res.json({
             success: true,
             count: validFiles.length,
-            data: validFiles
+            data: validFiles,
         });
     } catch (error) {
         res.status(500).json({
             success: false,
             message: "Failed to fetch deleted files",
-            error: error.message
+            error: error.message,
         });
     }
 };
@@ -63,29 +79,121 @@ const getDeletedFolders = async (req, res) => {
             .sort({ deletedAt: -1 })
             .lean();
 
-        // Filter and map in memory
-        const validFolders = deletedFoldersRaw
-            .filter(f => isWithinRetentionWindow(f.deletedAt))
-            .map(f => ({
+        const withinRetention = deletedFoldersRaw.filter((f) =>
+            isWithinRetentionWindow(f.deletedAt)
+        );
+
+        const rootDeletedFolders = getRootDeletedFolders(withinRetention);
+
+        const validFolders = rootDeletedFolders.map((f) => {
+            const nestedCount = withinRetention.filter(
+                (other) =>
+                    other._id.toString() !== f._id.toString() &&
+                    other.path &&
+                    f.path &&
+                    other.path.startsWith(`${f.path}/`)
+            ).length;
+
+            return {
                 _id: f._id,
                 name: f.name,
                 path: f.path,
                 deletedAt: f.deletedAt,
                 deletedBy: f.deletedBy,
                 deleteReason: f.deleteReason,
-                daysRemaining: calculateDaysRemaining(f.deletedAt)
-            }));
+                daysRemaining: calculateDaysRemaining(f.deletedAt),
+                nestedDeletedCount: nestedCount,
+            };
+        });
 
         res.json({
             success: true,
             count: validFolders.length,
-            data: validFolders
+            data: validFolders,
         });
     } catch (error) {
         res.status(500).json({
             success: false,
             message: "Failed to fetch deleted folders",
-            error: error.message
+            error: error.message,
+        });
+    }
+};
+
+// @desc Permanently delete all eligible deleted folders
+// @route POST /api/safety/deleted-folders/permanent-delete-all
+const permanentlyDeleteAllFolders = async (req, res) => {
+    try {
+        const { confirm } = req.body || {};
+
+        if (confirm !== true) {
+            return res.status(400).json({
+                success: false,
+                message: "Permanent delete all confirmation required.",
+            });
+        }
+
+        const result = await permanentlyDeleteAllDeletedFolders(req.user);
+
+        await logActivity({
+            userId: req.user._id,
+            action: "folder_deleted",
+            targetType: "folder",
+            targetId: null,
+            message: `${req.user.name} permanently deleted all eligible deleted folders`,
+            metadata: { permanent: true, bulk: true, ...result },
+            req,
+        });
+
+        res.json({
+            success: true,
+            message: "Eligible deleted folders permanently removed",
+            ...result,
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: "Failed to permanently delete all folders",
+            error: error.message,
+        });
+    }
+};
+
+// @desc Permanently delete all eligible deleted files
+// @route POST /api/safety/deleted-files/permanent-delete-all
+const permanentlyDeleteAllFiles = async (req, res) => {
+    try {
+        const { confirm } = req.body || {};
+
+        if (confirm !== true) {
+            return res.status(400).json({
+                success: false,
+                message: "Permanent delete all confirmation required.",
+            });
+        }
+
+        const result = await permanentlyDeleteAllDeletedFiles(req.user);
+
+        await logActivity({
+            userId: req.user._id,
+            action: "file_deleted",
+            targetType: "file",
+            targetId: null,
+            message: `${req.user.name} permanently deleted all eligible deleted files`,
+            metadata: { permanent: true, bulk: true, ...result },
+            req,
+        });
+
+        res.json({
+            success: true,
+            message: "Eligible deleted files permanently removed",
+            ...result,
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: "Failed to permanently delete all files",
+            error: error.message,
         });
     }
 };
@@ -99,19 +207,21 @@ const getBackupGuidance = (req, res) => {
             database: [
                 "Enable MongoDB Atlas automated backups",
                 "Take manual backup before deployment",
-                "Use point-in-time restore if available"
+                "Use point-in-time restore if available",
             ],
             r2: [
                 "Enable lifecycle rules later",
                 "Keep soft-deleted metadata for 30 days",
-                "Do not permanently delete R2 objects during MVP"
-            ]
-        }
+                "Do not permanently delete R2 objects during MVP",
+            ],
+        },
     });
 };
 
 module.exports = {
     getDeletedFiles,
     getDeletedFolders,
-    getBackupGuidance
+    permanentlyDeleteAllFolders,
+    permanentlyDeleteAllFiles,
+    getBackupGuidance,
 };

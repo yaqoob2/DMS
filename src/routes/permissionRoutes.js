@@ -101,7 +101,7 @@ router.post("/", protect, requireFolderPermission("admin"), grantFolderPermissio
  *       500:
  *         description: Server error
  */
-router.patch("/:id", protect, requireFolderPermission("admin"), updateFolderPermission);
+router.patch("/:id", protect, updateFolderPermission);
 
 /**
  * @swagger
@@ -131,6 +131,6 @@ router.patch("/:id", protect, requireFolderPermission("admin"), updateFolderPerm
  *       500:
  *         description: Server error
  */
-router.delete("/:id", protect, requireFolderPermission("admin"), removeFolderPermission);
+router.delete("/:id", protect, removeFolderPermission);
 
 module.exports = router;

@@ -55,12 +55,12 @@ const folderSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-// Index to prevent duplicate folder names within the same parent
+// Unique name per parent for active folders only (soft-deleted rows are excluded).
 folderSchema.index(
     { name: 1, parentFolderId: 1 },
     {
         unique: true,
-        partialFilterExpression: { isDeleted: false },
+        partialFilterExpression: { isDeleted: { $eq: false } },
     }
 );
 

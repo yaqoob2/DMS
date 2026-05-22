@@ -1,6 +1,7 @@
 const Permission = require("../models/Permission");
 const Folder = require("../models/Folder");
 const { logActivity } = require("../services/activityService");
+const { userCanManageFolderPermissions } = require("../middlewares/permissionMiddleware");
 
 // @desc Grant folder permission to a user
 // @route POST /api/permissions
@@ -19,6 +20,15 @@ const grantFolderPermission = async (req, res) => {
         const folder = await Folder.findOne({ _id: folderId, isDeleted: false });
         if (!folder) {
             return res.status(404).json({ success: false, message: "Folder not found" });
+        }
+
+        const canManage = await userCanManageFolderPermissions(req.user, folder);
+
+        if (!canManage) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied. Only the folder owner or users with admin permission can manage permissions.",
+            });
         }
 
         // Check if permission already exists
@@ -73,6 +83,15 @@ const getFolderPermissions = async (req, res) => {
             return res.status(404).json({ success: false, message: "Folder not found" });
         }
 
+        const canManage = await userCanManageFolderPermissions(req.user, folder);
+
+        if (!canManage) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied. Only the folder owner or users with admin permission can view permissions.",
+            });
+        }
+
         const permissions = await Permission.find({ folderId, isActive: true })
             .populate("userId", "name email role")
             .populate("grantedBy", "name email");
@@ -104,6 +123,24 @@ const updateFolderPermission = async (req, res) => {
         const permission = await Permission.findOne({ _id: req.params.id, isActive: true });
         if (!permission) {
             return res.status(404).json({ success: false, message: "Permission not found" });
+        }
+
+        const folder = await Folder.findOne({
+            _id: permission.folderId,
+            isDeleted: false,
+        });
+
+        if (!folder) {
+            return res.status(404).json({ success: false, message: "Folder not found" });
+        }
+
+        const canManage = await userCanManageFolderPermissions(req.user, folder);
+
+        if (!canManage) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied. Only the folder owner or users with admin permission can update permissions.",
+            });
         }
 
         permission.access = access;
@@ -143,6 +180,24 @@ const removeFolderPermission = async (req, res) => {
             return res.status(404).json({ success: false, message: "Permission not found" });
         }
 
+        const folder = await Folder.findOne({
+            _id: permission.folderId,
+            isDeleted: false,
+        });
+
+        if (!folder) {
+            return res.status(404).json({ success: false, message: "Folder not found" });
+        }
+
+        const canManage = await userCanManageFolderPermissions(req.user, folder);
+
+        if (!canManage) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied. Only the folder owner or users with admin permission can remove permissions.",
+            });
+        }
+
         permission.isActive = false;
         await permission.save();
 
@@ -161,6 +216,7 @@ const removeFolderPermission = async (req, res) => {
             message: "Permission removed successfully",
         });
     } catch (error) {
+        console.error("Failed to remove permission:", error);
         res.status(500).json({
             success: false,
             message: "Failed to remove permission",

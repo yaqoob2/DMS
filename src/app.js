@@ -25,6 +25,7 @@ const allowedOrigins = [
     process.env.CLIENT_URL,
     "http://localhost:5173",
     "http://localhost:5175",
+    "http://localhost:5000",
     "https://connecthubdcm.org",
     "https://www.connecthubdcm.org",
 ].filter(Boolean);

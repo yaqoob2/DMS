@@ -11,6 +11,7 @@ const {
     deleteFile,
     previewFile,
     restoreDeletedFile,
+    permanentlyDeleteFile,
 } = require("../controllers/fileController");
 const { addComment, getFileComments, deleteComment } = require("../controllers/commentController");
 const { getFileActivityLogs } = require("../controllers/activityController");
@@ -380,7 +381,7 @@ router.post("/:id/restore/:versionId", protect, requireFolderPermission("edit"),
  *       500:
  *         description: Server error
  */
-router.delete("/:id", protect, requireFolderPermission("admin"), deleteFile);
+router.delete("/:id", protect, deleteFile);
 
 /**
  * @swagger
@@ -412,7 +413,9 @@ router.delete("/:id", protect, requireFolderPermission("admin"), deleteFile);
  *       500:
  *         description: Server error
  */
-router.post("/:id/restore-deleted", protect, requireFolderPermission("admin"), restoreDeletedFile);
+router.post("/:id/restore-deleted", protect, restoreDeletedFile);
+
+router.post("/:id/permanent-delete", protect, permanentlyDeleteFile);
 
 /**
  * @swagger

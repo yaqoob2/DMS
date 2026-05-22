@@ -2,12 +2,18 @@ const express = require("express");
 const {
     getDeletedFiles,
     getDeletedFolders,
-    getBackupGuidance
+    permanentlyDeleteAllFolders,
+    permanentlyDeleteAllFiles,
+    getBackupGuidance,
 } = require("../controllers/safetyController");
+const { permanentlyDeleteFolder } = require("../controllers/folderController");
+const { permanentlyDeleteFile } = require("../controllers/fileController");
 const { protect } = require("../middlewares/authMiddleware");
 const { authorizeRoles } = require("../middlewares/roleMiddleware");
 
 const router = express.Router();
+
+const safetyRoles = authorizeRoles("superadmin", "owner");
 
 /**
  * @swagger
@@ -16,66 +22,57 @@ const router = express.Router();
  *   description: Backup, retention, and soft delete recovery APIs (Superadmin only)
  */
 
-/**
- * @swagger
- * /api/safety/deleted-files:
- *   get:
- *     summary: View deleted files
- *     description: Retrieve all files currently soft-deleted and within the 30-day retention window. Requires superadmin role.
- *     tags: [Safety]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Deleted files fetched successfully
- *       401:
- *         description: Not authorized
- *       403:
- *         description: Access denied
- *       500:
- *         description: Server error
- */
-router.get("/deleted-files", protect, authorizeRoles("superadmin", "owner"), getDeletedFiles);
+router.get("/deleted-files", protect, safetyRoles, getDeletedFiles);
+router.get("/deleted-folders", protect, safetyRoles, getDeletedFolders);
 
-/**
- * @swagger
- * /api/safety/deleted-folders:
- *   get:
- *     summary: View deleted folders
- *     description: Retrieve all folders currently soft-deleted and within the 30-day retention window. Requires superadmin role.
- *     tags: [Safety]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Deleted folders fetched successfully
- *       401:
- *         description: Not authorized
- *       403:
- *         description: Access denied
- *       500:
- *         description: Server error
- */
+router.post(
+    "/deleted-files/permanent-delete-all",
+    protect,
+    safetyRoles,
+    permanentlyDeleteAllFiles
+);
 
-router.get("/deleted-folders", protect, authorizeRoles("superadmin", "owner"), getDeletedFolders);
+router.post(
+    "/deleted-folders/permanent-delete-all",
+    protect,
+    safetyRoles,
+    permanentlyDeleteAllFolders
+);
 
-/**
- * @swagger
- * /api/safety/backup-guidance:
- *   get:
- *     summary: View backup guidance
- *     description: Retrieve database and R2 storage backup guidance protocols. Requires superadmin role.
- *     tags: [Safety]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Backup guidance fetched
- *       401:
- *         description: Not authorized
- *       403:
- *         description: Access denied
- */
+router.post(
+    "/deleted-folders/:id/permanent-delete",
+    protect,
+    safetyRoles,
+    permanentlyDeleteFolder
+);
+
+router.delete(
+    "/deleted-folders/:id",
+    protect,
+    safetyRoles,
+    (req, res) => {
+        req.body = { ...(req.body || {}), confirm: true };
+        return permanentlyDeleteFolder(req, res);
+    }
+);
+
+router.post(
+    "/deleted-files/:id/permanent-delete",
+    protect,
+    safetyRoles,
+    permanentlyDeleteFile
+);
+
+router.delete(
+    "/deleted-files/:id",
+    protect,
+    safetyRoles,
+    (req, res) => {
+        req.body = { ...(req.body || {}), confirm: true };
+        return permanentlyDeleteFile(req, res);
+    }
+);
+
 router.get("/backup-guidance", protect, authorizeRoles("superadmin"), getBackupGuidance);
 
 module.exports = router;
