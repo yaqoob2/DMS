@@ -1,5 +1,77 @@
 const User = require("../models/User");
 
+const {
+    S3Client,
+    PutObjectCommand,
+    GetObjectCommand,
+    DeleteObjectCommand,
+} = require("@aws-sdk/client-s3");
+
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+
+const r2Client = new S3Client({
+    region: "auto",
+    endpoint:
+        process.env.R2_ENDPOINT ||
+        `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+});
+
+const getSignedProfileImageUrl = async (profileImageKey) => {
+    if (!profileImageKey) return "";
+
+    const command = new GetObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: profileImageKey,
+    });
+
+    return getSignedUrl(r2Client, command, {
+        expiresIn: Number(process.env.R2_SIGNED_URL_EXPIRES_SECONDS || 3600),
+    });
+};
+
+const cleanFileName = (fileName = "profile.jpg") => {
+    return fileName
+        .replace(/\s+/g, "-")
+        .replace(/[^a-zA-Z0-9._-]/g, "")
+        .toLowerCase();
+};
+
+const uploadProfileImageToR2 = async ({ userId, file }) => {
+    const timestamp = Date.now();
+    const safeFileName = cleanFileName(file.originalname);
+    const profileImageKey = `profile-pics/${userId}-${timestamp}-${safeFileName}`;
+
+    await r2Client.send(
+        new PutObjectCommand({
+            Bucket: process.env.R2_BUCKET_NAME,
+            Key: profileImageKey,
+            Body: file.buffer,
+            ContentType: file.mimetype,
+        })
+    );
+
+    return profileImageKey;
+};
+
+const deleteOldProfileImageFromR2 = async (profileImageKey) => {
+    if (!profileImageKey) return;
+
+    try {
+        await r2Client.send(
+            new DeleteObjectCommand({
+                Bucket: process.env.R2_BUCKET_NAME,
+                Key: profileImageKey,
+            })
+        );
+    } catch (error) {
+        console.error("Failed to delete old profile image from R2:", error.message);
+    }
+};
+
 // @desc Superadmin creates user
 // @route POST /api/users
 const createUser = async (req, res) => {
@@ -59,10 +131,22 @@ const getUsers = async (req, res) => {
             .select("-password")
             .sort({ createdAt: -1 });
 
+        const usersWithSignedImages = await Promise.all(
+            users.map(async (user) => {
+                const plainUser = user.toObject();
+
+                plainUser.profileImageUrl = plainUser.profileImageKey
+                    ? await getSignedProfileImageUrl(plainUser.profileImageKey)
+                    : "";
+
+                return plainUser;
+            })
+        );
+
         res.json({
             success: true,
-            count: users.length,
-            users,
+            count: usersWithSignedImages.length,
+            users: usersWithSignedImages,
         });
     } catch (error) {
         res.status(500).json({
@@ -299,6 +383,70 @@ const resetUserPassword = async (req, res) => {
     }
 };
 
+const updateUserProfileImage = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: "Profile image file is required",
+            });
+        }
+
+        const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp"];
+
+        if (!allowedMimeTypes.includes(req.file.mimetype)) {
+            return res.status(400).json({
+                success: false,
+                message: "Only JPG, PNG, and WEBP images are allowed",
+            });
+        }
+
+        const user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found",
+            });
+        }
+
+        const oldProfileImageKey = user.profileImageKey;
+
+        const profileImageKey = await uploadProfileImageToR2({
+            userId: user._id.toString(),
+            file: req.file,
+        });
+
+        user.profileImageKey = profileImageKey;
+        user.profileImageUrl = "";
+
+        await user.save();
+
+        if (oldProfileImageKey) {
+            await deleteOldProfileImageFromR2(oldProfileImageKey);
+        }
+
+        const signedProfileImageUrl = await getSignedProfileImageUrl(profileImageKey);
+
+        const safeUser = user.toObject();
+        delete safeUser.password;
+
+        safeUser.profileImageUrl = signedProfileImageUrl;
+
+        res.status(200).json({
+            success: true,
+            message: "Profile image uploaded successfully",
+            user: safeUser,
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: "Failed to update profile image",
+            error: error.message,
+        });
+    }
+};
+
 module.exports = {
     createUser,
     getUsers,
@@ -308,4 +456,5 @@ module.exports = {
     updateUserRole,
     changeMyPassword,
     resetUserPassword,
+    updateUserProfileImage,
 };
