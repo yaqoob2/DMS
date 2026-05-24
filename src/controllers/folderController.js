@@ -3,7 +3,6 @@ const File = require("../models/File");
 const Permission = require("../models/Permission");
 const { logActivity } = require("../services/activityService");
 const { isWithinRetentionWindow } = require("../utils/retentionHelper");
-const { userCanManageFolderPermissions } = require("../middlewares/permissionMiddleware");
 const {
     removeDeletedFolderTree,
     filterActiveFoldersExcludingDeletedTrees,
@@ -18,6 +17,13 @@ const findActiveFolderByNameAndParent = (name, parentFolderId) => {
         ...buildParentFolderQuery(parentFolderId),
         isDeleted: false,
     });
+};
+
+const isFolderOwner = (user, folder) => {
+    if (!user || !folder?.createdBy) return false;
+
+    const userId = user._id || user.id;
+    return folder.createdBy.toString() === userId.toString();
 };
 
 // @desc Create a new folder
@@ -331,7 +337,6 @@ const deleteFolder = async (req, res) => {
             isDeleted: true,
         });
 
-        // Trash UI uses DELETE /api/folders/:id on already soft-deleted rows
         if (!activeFolder && deletedFolder) {
             req.body = { ...body, confirm: true };
             return permanentlyDeleteFolder(req, res);
@@ -353,13 +358,10 @@ const deleteFolder = async (req, res) => {
 
         const folder = activeFolder;
 
-        const canDelete = await userCanManageFolderPermissions(req.user, folder);
-
-        if (!canDelete) {
+        if (!isFolderOwner(req.user, folder)) {
             return res.status(403).json({
                 success: false,
-                message:
-                    "Only the folder owner or users with admin permission can delete this folder.",
+                message: "Access denied. Only the user who created this folder can delete it.",
             });
         }
 
@@ -373,7 +375,7 @@ const deleteFolder = async (req, res) => {
             });
         }
 
-        const folderDeleteResult = await Folder.updateMany(
+        await Folder.updateMany(
             {
                 isDeleted: false,
                 $or: deleteScopeOr,
@@ -455,13 +457,10 @@ const restoreDeletedFolder = async (req, res) => {
             });
         }
 
-        const canRestore = await userCanManageFolderPermissions(req.user, folder);
-
-        if (!canRestore) {
+        if (!isFolderOwner(req.user, folder)) {
             return res.status(403).json({
                 success: false,
-                message:
-                    "Only the folder owner or users with admin permission can restore this folder.",
+                message: "Access denied. Only the user who created this folder can restore it.",
             });
         }
 
@@ -601,13 +600,11 @@ const permanentlyDeleteFolder = async (req, res) => {
             });
         }
 
-        const canDelete = await userCanManageFolderPermissions(req.user, folder);
-
-        if (!canDelete) {
+        if (!isFolderOwner(req.user, folder)) {
             return res.status(403).json({
                 success: false,
                 message:
-                    "Only the folder owner or users with admin permission can permanently delete this folder.",
+                    "Access denied. Only the user who created this folder can permanently delete it.",
             });
         }
 
